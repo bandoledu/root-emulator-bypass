@@ -1,6 +1,6 @@
 # Root Detection & SSL Bypass Script
 
-This repository contains a comprehensive Frida script for bypassing root detection, SSL certificate pinning, and emulator detection in Android applications.
+This repository contains a comprehensive Frida script for bypassing root detection and SSL certificate pinning in Android applications.
 
 ## Technical Implementation
 
@@ -27,14 +27,6 @@ The script provides three main bypass functionalities:
   - BufferedReader modifications
   - Secure hardware attestation
 
-### 3. Emulator Detection Bypass
-- Bypasses common emulator detection methods:
-  - Build property modifications
-  - Telephony information spoofing
-  - Emulator-specific file checks
-  - CPU information modification
-  - System property checks
-  - Package detection prevention
 
 ## Features
 
@@ -57,12 +49,6 @@ The script includes extensive bypass capabilities:
   - TrustKit
   - WebView
 
-### Emulator Detection
-- Spoofs device information
-- Blocks emulator-specific file detection
-- Modifies hardware information
-- Prevents detection of emulator-related packages
-- Handles telephony information requests
 
 ## Prerequisites
 
