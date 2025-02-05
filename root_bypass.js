@@ -243,7 +243,7 @@ setTimeout(function() {
                     "android.webkit.WebView",
                     "android.webkit.SslErrorHandler",
                     "android.net.http.SslError"
-                ).implementation = function(webView, handler, error) {
+                ).implementation = function(_, handler, error) {
                     handler.proceed();
                 };
             } catch(e) {
@@ -262,10 +262,6 @@ setTimeout(function() {
                         );
                         
                         if (exceptionStack >= 0) {
-                            const callingStack = stackTrace[exceptionStack + 1];
-                            const className = callingStack.getClassName();
-                            const methodName = callingStack.getMethodName();
-                            
                             return this.$init("SSL verification bypassed");
                         }
                     } catch(e) {
@@ -291,6 +287,9 @@ setTimeout(function() {
                 bypassProcessBuilder();
                 bypassBufferedReader();
                 bypassSecureHardware();
+                bypassPackageManager();
+                bypassDeveloperMode();
+                bypassFridaDetection();
                 
                 bypassStatus.root = true;
                 return true;
@@ -411,7 +410,6 @@ setTimeout(function() {
         function bypassRuntimeExec() {
             try {
                 const Runtime = Java.use("java.lang.Runtime");
-                const String = Java.use("java.lang.String");
 
                 function shouldBlockCommand(cmd) {
                     const blockedCommands = ["getprop", "mount", "build.prop", "id", "sh", "su", "which"];
@@ -497,17 +495,14 @@ setTimeout(function() {
                     return this.start.call(this);
                 };
 
+                // ProcessManager kontrolü ve bypass'ı
                 Java.perform(function() {
-                    try {
-                        if (Java.available) {
-                            const loadedClasses = Java.enumerateLoadedClassesSync();
-                            if (loadedClasses.includes("java.lang.ProcessManager")) {
-                                const ProcessManager = Java.use("java.lang.ProcessManager");
-                                bypassProcessManager();
-                            }
+                    if (Java.available) {
+                        const loadedClasses = Java.enumerateLoadedClassesSync();
+                        if (loadedClasses.includes("java.lang.ProcessManager")) {
+                            JavaClasses.ProcessManager = Java.use("java.lang.ProcessManager");
+                            bypassProcessManager();
                         }
-                    } catch(e) {
-                        console.log("[-] ProcessManager not available");
                     }
                 });
 
@@ -571,6 +566,209 @@ setTimeout(function() {
                     console.log("[-] SecureHardware hook not available");
                 }
             });
+        }
+
+        function bypassPackageManager() {
+            try {
+                JavaClasses.PackageManager.getPackageInfo.overload(
+                    'java.lang.String', 
+                    'android.content.pm.PackageManager$PackageInfoFlags'
+                ).implementation = function(name, flags) {
+                    if (ROOT_PACKAGES.includes(name)) {
+                        throw Java.use("android.content.pm.PackageManager$NameNotFoundException").$new();
+                    }
+                    return this.getPackageInfo.call(this, name, flags);
+                };
+            } catch(e) {
+                console.log("[-] Package manager hook failed:", e);
+            }
+        }
+
+        function bypassDeveloperMode() {
+            try {
+                const Settings = Java.use('android.provider.Settings$Global');
+                
+                Settings.getInt.overload(
+                    'android.content.ContentResolver', 
+                    'java.lang.String'
+                ).implementation = function(resolver, name) {
+                    if (name === 'development_settings_enabled' || 
+                        name === 'adb_enabled' || 
+                        name === 'debug_app') {
+                        console.log(`[+] Blocked developer setting check: ${name}`);
+                        return 0;
+                    }
+                    return this.getInt(resolver, name);
+                };
+                console.log("[+] Developer mode bypass initialized");
+                return true;
+            } catch(e) {
+                console.log("[-] Developer mode bypass failed:", e);
+                return false;
+            }
+        }
+
+        function bypassFridaDetection() {
+            const SAFE_MODE = true;  // Enable safe mode to prevent crashes
+            
+            try {
+                // Safer text section protection
+                const hookStat = () => {
+                    const stat = Module.findExportByName("libc.so", "stat");
+                    if (stat) {
+                        Interceptor.attach(stat, {
+                            onEnter(args) {
+                                try {
+                                    const path = args[0].readCString();
+                                    if (path && (path.includes("/proc/") || path.includes("/system/"))) {
+                                        args[0].writeUtf8String("/dev/null");
+                                    }
+                                } catch(e) {}
+                            }
+                        });
+                    }
+                };
+
+                // Safer thread detection bypass
+                const hookThreads = () => {
+                    Java.perform(function() {
+                        try {
+                            const Thread = Java.use('java.lang.Thread');
+                            Thread.currentThread.implementation = function() {
+                                try {
+                                    const thread = this.currentThread();
+                                    if (thread != null) {
+                                        const threadName = thread.getName();
+                                        if (threadName && (
+                                            threadName.includes('gum-js-loop') || 
+                                            threadName.includes('gmain') || 
+                                            threadName.includes('frida')
+                                        )) {
+                                            const safeNames = ['AudioThread', 'SoundPool', 'Camera', 'Display'];
+                                            const safeName = safeNames[Math.floor(Math.random() * safeNames.length)] + 
+                                                           '-' + Math.random().toString(36).slice(-6);
+                                            thread.setName(safeName);
+                                        }
+                                    }
+                                    return thread;
+                                } catch(e) {
+                                    return this.currentThread();
+                                }
+                            };
+                        } catch(e) {}
+                    });
+                };
+
+                // Safer port detection bypass
+                const hookConnect = () => {
+                    const connect = Module.findExportByName("libc.so", "connect");
+                    if (connect) {
+                        Interceptor.attach(connect, {
+                            onEnter(args) {
+                                try {
+                                    if (args[1]) {
+                                        const port = Memory.readU16(args[1].add(2));
+                                        if (port === 27042) {
+                                            const randomPort = 1024 + Math.floor(Math.random() * 65535-1024);
+                                            Memory.writeU16(args[1].add(2), randomPort);
+                                        }
+                                    }
+                                } catch(e) {}
+                            }
+                        });
+                    }
+                };
+
+                // Safer string detection bypass
+                const hookStrStr = () => {
+                    const strstr = Module.findExportByName("libc.so", "strstr");
+                    if (strstr) {
+                        Interceptor.attach(strstr, {
+                            onEnter(args) {
+                                try {
+                                    if (args[0] && args[1]) {
+                                        const needle = args[1].readCString();
+                                        if (needle && (
+                                            needle.includes("frida") || 
+                                            needle.includes("gum") || 
+                                            needle.includes("linjector") ||
+                                            needle.includes("gdbus")
+                                        )) {
+                                            args[1].writeUtf8String("android");
+                                        }
+                                    }
+                                } catch(e) {}
+                            }
+                        });
+                    }
+                };
+
+                // Safer file operation bypass
+                const hookOpen = () => {
+                    const open = Module.findExportByName("libc.so", "open");
+                    if (open) {
+                        Interceptor.attach(open, {
+                            onEnter(args) {
+                                try {
+                                    if (args[0]) {
+                                        const path = args[0].readCString();
+                                        if (path && (
+                                            path.includes("frida") ||
+                                            path.includes("dbus") || 
+                                            path.includes("system_server") ||
+                                            path.includes("/proc/") ||
+                                            path.includes("/sys/")
+                                        )) {
+                                            args[0].writeUtf8String("/dev/null");
+                                        }
+                                    }
+                                } catch(e) {}
+                            }
+                        });
+                    }
+                };
+
+                // Only implement mmap hook if not in safe mode
+                const hookMmap = () => {
+                    if (!SAFE_MODE) {
+                        const mmap = Module.findExportByName("libc.so", "mmap");
+                        if (mmap) {
+                            Interceptor.attach(mmap, {
+                                onEnter(args) {
+                                    try {
+                                        if (args[2]) {
+                                            const prot = args[2].toInt32();
+                                            if (prot & 0x1) { // PROT_READ
+                                                console.log("[*] Memory protection check detected");
+                                            }
+                                        }
+                                    } catch(e) {}
+                                }
+                            });
+                        }
+                    }
+                };
+
+                // Execute hooks with error handling
+                const hooks = [hookStat, hookThreads, hookConnect, hookStrStr, hookOpen];
+                if (!SAFE_MODE) {
+                    hooks.push(hookMmap);
+                }
+
+                hooks.forEach(hook => {
+                    try {
+                        hook();
+                    } catch(e) {
+                        console.log(`[-] Hook failed: ${hook.name}`);
+                    }
+                });
+
+                console.log("[+] Frida detection bypass initialized" + (SAFE_MODE ? " (Safe Mode)" : ""));
+                return true;
+            } catch(e) {
+                console.log("[-] Frida detection bypass failed:", e);
+                return false;
+            }
         }
 
         function emulatorBypass() {
