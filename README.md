@@ -133,5 +133,3 @@ The script includes extensive bypass capabilities:
 ## Security Notice
 
 This tool is designed strictly for legitimate security research, penetration testing, and vulnerability assessment purposes. Using this tool to bypass root detection or SSL pinning without explicit authorization may violate applicable laws, terms of service, or privacy regulations. Security researchers should obtain proper permission before testing any application and respect responsible disclosure practices. The ability to bypass security controls carries significant ethical responsibilities. Never use this tool on applications or systems without proper authorization from the system owner. The authors of this tool are not responsible for any misuse or damage caused by using this bypass script. Always ensure compliance with relevant laws, regulations, and ethical guidelines when conducting security research. 
-
-![Image](https://github.com/user-attachments/assets/8b7a0743-edf0-4c14-b5ad-f103d78a157d)
