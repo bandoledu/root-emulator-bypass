@@ -5,7 +5,6 @@ setTimeout(function() {
         const bypassStatus = {
             ssl: false,
             root: false,
-            emulator: false
         };
 
         const ROOT_FILES = [
@@ -82,8 +81,7 @@ setTimeout(function() {
 
         const ROOT_BINARIES = new Set([
             "su", "busybox", "supersu", "Superuser.apk", "KingoUser.apk",
-            "SuperSu.apk", "magisk", "magisk64", "magiskhide", "magiskboot",
-            "magiskpolicy", "magiskinit"
+            "SuperSu.apk", "magisk", "magisk64", "magiskhide", "magiskboot"
         ]);
 
         const ROOT_PROPERTIES = new Map([
@@ -109,6 +107,43 @@ setTimeout(function() {
             PackageManager: Java.use("android.app.ApplicationPackageManager"),
             ProcessBuilder: Java.use("java.lang.ProcessBuilder")
         };
+
+        const LOG_LEVEL = {
+            DEBUG: 0,
+            INFO: 1,
+            WARN: 2,
+            ERROR: 3
+        };
+
+        const CURRENT_LOG_LEVEL = LOG_LEVEL.INFO;
+
+        const CONFIG = {
+            enableSSLBypass: true,
+            enableRootBypass: true,
+            enableDetailedLogs: false,
+            blockAllRootCommands: true,
+            allowedRootCommands: new Set(["getprop"]), // Whitelist certain commands
+        };
+
+        function log(level, message, error) {
+            if (level >= CURRENT_LOG_LEVEL) {
+                switch(level) {
+                    case LOG_LEVEL.DEBUG:
+                        console.log("[D] " + message);
+                        break;
+                    case LOG_LEVEL.INFO:
+                        console.log("[*] " + message);
+                        break;
+                    case LOG_LEVEL.WARN:
+                        console.log("[!] " + message);
+                        break;
+                    case LOG_LEVEL.ERROR:
+                        console.error("[E] " + message);
+                        if (error) console.error(error.stack || error);
+                        break;
+                }
+            }
+        }
 
         function setupSSLBypass() {
             console.log("[+] Setting up SSL bypass...");
@@ -243,7 +278,7 @@ setTimeout(function() {
                     "android.webkit.WebView",
                     "android.webkit.SslErrorHandler",
                     "android.net.http.SslError"
-                ).implementation = function(_, handler, error) {
+                ).implementation = function(webView, handler, error) {
                     handler.proceed();
                 };
             } catch(e) {
@@ -262,6 +297,10 @@ setTimeout(function() {
                         );
                         
                         if (exceptionStack >= 0) {
+                            const callingStack = stackTrace[exceptionStack + 1];
+                            const className = callingStack.getClassName();
+                            const methodName = callingStack.getMethodName();
+                            
                             return this.$init("SSL verification bypassed");
                         }
                     } catch(e) {
@@ -278,6 +317,17 @@ setTimeout(function() {
         function setupRootBypass() {
             console.log("[+] Initializing Enhanced Root Detection Bypass...");
             try {
+                // Add this check for root packages
+                const pm = Java.use("android.app.ActivityThread").currentApplication().getApplicationContext().getPackageManager();
+                ROOT_PACKAGES.forEach(pkg => {
+                    try {
+                        pm.getPackageInfo(pkg, 0);
+                        log(LOG_LEVEL.DEBUG, `Found root package: ${pkg}`);
+                    } catch(e) {
+                        // Package not found - good
+                    }
+                });
+
                 bypassNativeFileOperations();
                 bypassBuildProps();
                 bypassShellCommands();
@@ -287,9 +337,6 @@ setTimeout(function() {
                 bypassProcessBuilder();
                 bypassBufferedReader();
                 bypassSecureHardware();
-                bypassPackageManager();
-                bypassDeveloperMode();
-                bypassFridaDetection();
                 
                 bypassStatus.root = true;
                 return true;
@@ -373,6 +420,14 @@ setTimeout(function() {
                     const cmd = cmdarray[0].toString();
                     const arg = cmdarray.length > 1 ? cmdarray[1].toString() : "";
                     
+                    // Add package check
+                    if (cmd === "pm" && arg === "list" && cmdarray.length > 2) {
+                        // Block package listing that might reveal root apps
+                        if (ROOT_PACKAGES.some(pkg => cmdarray[2].toString().includes(pkg))) {
+                            cmdarray[0] = Java.use("java.lang.String").$new("");
+                        }
+                    }
+                    
                     if ((cmd === "mount") || 
                         (cmd === "getprop" && SENSITIVE_PROPS.has(arg)) ||
                         (cmd.includes("which") && arg === "su")) {
@@ -386,34 +441,17 @@ setTimeout(function() {
             }
         }
 
-        function bypassBuildProps() {
-            try {
-                const Build = Java.use("android.os.Build");
-                Build.PRODUCT.value = "gracerltexx";
-                Build.MANUFACTURER.value = "samsung";
-                Build.BRAND.value = "samsung";
-                Build.DEVICE.value = "gracerlte";
-                Build.MODEL.value = "SM-N935F";
-                Build.HARDWARE.value = "samsungexynos8890";
-                Build.FINGERPRINT.value = "samsung/gracerltexx/gracerlte:8.0.0/R16NW/N935FXXS4BRK2:user/release-keys";
-                
-                Build.BOARD.value = "universal8890";
-                Build.HOST.value = "SWHE";
-                Build.ID.value = "R16NW";
-                Build.TYPE.value = "user";
-                Build.TAGS.value = "release-keys";
-            } catch (e) {
-                console.log("[-] Build properties hook failed:", e);
-            }
-        }
-
         function bypassRuntimeExec() {
             try {
                 const Runtime = Java.use("java.lang.Runtime");
-
+                
                 function shouldBlockCommand(cmd) {
-                    const blockedCommands = ["getprop", "mount", "build.prop", "id", "sh", "su", "which"];
-                    return blockedCommands.some(blocked => cmd.includes(blocked));
+                    cmd = cmd.toLowerCase();
+                    return ROOT_BINARIES.has(cmd) || 
+                           ROOT_PACKAGES.some(pkg => cmd.includes(pkg.toLowerCase())) ||
+                           ["getprop", "mount", "build.prop", "id", "sh", "su", "which"].some(
+                               blocked => cmd.includes(blocked)
+                           );
                 }
 
                 const execOverloads = [
@@ -495,14 +533,17 @@ setTimeout(function() {
                     return this.start.call(this);
                 };
 
-                // ProcessManager kontrolü ve bypass'ı
                 Java.perform(function() {
-                    if (Java.available) {
-                        const loadedClasses = Java.enumerateLoadedClassesSync();
-                        if (loadedClasses.includes("java.lang.ProcessManager")) {
-                            JavaClasses.ProcessManager = Java.use("java.lang.ProcessManager");
-                            bypassProcessManager();
+                    try {
+                        if (Java.available) {
+                            const loadedClasses = Java.enumerateLoadedClassesSync();
+                            if (loadedClasses.includes("java.lang.ProcessManager")) {
+                                const ProcessManager = Java.use("java.lang.ProcessManager");
+                                bypassProcessManager();
+                            }
                         }
+                    } catch(e) {
+                        console.log("[-] ProcessManager not available");
                     }
                 });
 
@@ -568,338 +609,46 @@ setTimeout(function() {
             });
         }
 
-        function bypassPackageManager() {
+        function setupBypass() {
             try {
-                JavaClasses.PackageManager.getPackageInfo.overload(
-                    'java.lang.String', 
-                    'android.content.pm.PackageManager$PackageInfoFlags'
-                ).implementation = function(name, flags) {
-                    if (ROOT_PACKAGES.includes(name)) {
-                        throw Java.use("android.content.pm.PackageManager$NameNotFoundException").$new();
-                    }
-                    return this.getPackageInfo.call(this, name, flags);
-                };
-            } catch(e) {
-                console.log("[-] Package manager hook failed:", e);
-            }
-        }
-
-        function bypassDeveloperMode() {
-            try {
-                const Settings = Java.use('android.provider.Settings$Global');
+                const results = {};
                 
-                Settings.getInt.overload(
-                    'android.content.ContentResolver', 
-                    'java.lang.String'
-                ).implementation = function(resolver, name) {
-                    if (name === 'development_settings_enabled' || 
-                        name === 'adb_enabled' || 
-                        name === 'debug_app') {
-                        console.log(`[+] Blocked developer setting check: ${name}`);
-                        return 0;
-                    }
-                    return this.getInt(resolver, name);
-                };
-                console.log("[+] Developer mode bypass initialized");
-                return true;
-            } catch(e) {
-                console.log("[-] Developer mode bypass failed:", e);
-                return false;
-            }
-        }
-
-        function bypassFridaDetection() {
-            const SAFE_MODE = true;  // Enable safe mode to prevent crashes
-            
-            try {
-                // Safer text section protection
-                const hookStat = () => {
-                    const stat = Module.findExportByName("libc.so", "stat");
-                    if (stat) {
-                        Interceptor.attach(stat, {
-                            onEnter(args) {
-                                try {
-                                    const path = args[0].readCString();
-                                    if (path && (path.includes("/proc/") || path.includes("/system/"))) {
-                                        args[0].writeUtf8String("/dev/null");
-                                    }
-                                } catch(e) {}
-                            }
-                        });
-                    }
-                };
-
-                // Safer thread detection bypass
-                const hookThreads = () => {
-                    Java.perform(function() {
-                        try {
-                            const Thread = Java.use('java.lang.Thread');
-                            Thread.currentThread.implementation = function() {
-                                try {
-                                    const thread = this.currentThread();
-                                    if (thread != null) {
-                                        const threadName = thread.getName();
-                                        if (threadName && (
-                                            threadName.includes('gum-js-loop') || 
-                                            threadName.includes('gmain') || 
-                                            threadName.includes('frida')
-                                        )) {
-                                            const safeNames = ['AudioThread', 'SoundPool', 'Camera', 'Display'];
-                                            const safeName = safeNames[Math.floor(Math.random() * safeNames.length)] + 
-                                                           '-' + Math.random().toString(36).slice(-6);
-                                            thread.setName(safeName);
-                                        }
-                                    }
-                                    return thread;
-                                } catch(e) {
-                                    return this.currentThread();
-                                }
-                            };
-                        } catch(e) {}
-                    });
-                };
-
-                // Safer port detection bypass
-                const hookConnect = () => {
-                    const connect = Module.findExportByName("libc.so", "connect");
-                    if (connect) {
-                        Interceptor.attach(connect, {
-                            onEnter(args) {
-                                try {
-                                    if (args[1]) {
-                                        const port = Memory.readU16(args[1].add(2));
-                                        if (port === 27042) {
-                                            const randomPort = 1024 + Math.floor(Math.random() * 65535-1024);
-                                            Memory.writeU16(args[1].add(2), randomPort);
-                                        }
-                                    }
-                                } catch(e) {}
-                            }
-                        });
-                    }
-                };
-
-                // Safer string detection bypass
-                const hookStrStr = () => {
-                    const strstr = Module.findExportByName("libc.so", "strstr");
-                    if (strstr) {
-                        Interceptor.attach(strstr, {
-                            onEnter(args) {
-                                try {
-                                    if (args[0] && args[1]) {
-                                        const needle = args[1].readCString();
-                                        if (needle && (
-                                            needle.includes("frida") || 
-                                            needle.includes("gum") || 
-                                            needle.includes("linjector") ||
-                                            needle.includes("gdbus")
-                                        )) {
-                                            args[1].writeUtf8String("android");
-                                        }
-                                    }
-                                } catch(e) {}
-                            }
-                        });
-                    }
-                };
-
-                // Safer file operation bypass
-                const hookOpen = () => {
-                    const open = Module.findExportByName("libc.so", "open");
-                    if (open) {
-                        Interceptor.attach(open, {
-                            onEnter(args) {
-                                try {
-                                    if (args[0]) {
-                                        const path = args[0].readCString();
-                                        if (path && (
-                                            path.includes("frida") ||
-                                            path.includes("dbus") || 
-                                            path.includes("system_server") ||
-                                            path.includes("/proc/") ||
-                                            path.includes("/sys/")
-                                        )) {
-                                            args[0].writeUtf8String("/dev/null");
-                                        }
-                                    }
-                                } catch(e) {}
-                            }
-                        });
-                    }
-                };
-
-                // Only implement mmap hook if not in safe mode
-                const hookMmap = () => {
-                    if (!SAFE_MODE) {
-                        const mmap = Module.findExportByName("libc.so", "mmap");
-                        if (mmap) {
-                            Interceptor.attach(mmap, {
-                                onEnter(args) {
-                                    try {
-                                        if (args[2]) {
-                                            const prot = args[2].toInt32();
-                                            if (prot & 0x1) { // PROT_READ
-                                                console.log("[*] Memory protection check detected");
-                                            }
-                                        }
-                                    } catch(e) {}
-                                }
-                            });
-                        }
-                    }
-                };
-
-                // Execute hooks with error handling
-                const hooks = [hookStat, hookThreads, hookConnect, hookStrStr, hookOpen];
-                if (!SAFE_MODE) {
-                    hooks.push(hookMmap);
+                if (CONFIG.enableSSLBypass) {
+                    results.ssl = setupSSLBypass();
+                }
+                
+                if (CONFIG.enableRootBypass) {
+                    results.root = setupRootBypass();
                 }
 
-                hooks.forEach(hook => {
-                    try {
-                        hook();
-                    } catch(e) {
-                        console.log(`[-] Hook failed: ${hook.name}`);
-                    }
-                });
+                if (CONFIG.enableDetailedLogs) {
+                    log(LOG_LEVEL.DEBUG, "Detailed bypass results:", results);
+                }
 
-                console.log("[+] Frida detection bypass initialized" + (SAFE_MODE ? " (Safe Mode)" : ""));
-                return true;
+                return results;
             } catch(e) {
-                console.log("[-] Frida detection bypass failed:", e);
-                return false;
-            }
-        }
-
-        function emulatorBypass() {
-            try {
-                Java.perform(function() {
-                    const buildProps = {
-                        PRODUCT: "gracerltexx",
-                        MANUFACTURER: "samsung",
-                        BRAND: "samsung",
-                        DEVICE: "gracerlte",
-                        MODEL: "SM-N935F",
-                        HARDWARE: "samsungexynos8890",
-                        FINGERPRINT: "samsung/gracerltexx/gracerlte:8.0.0/R16NW/N935FXXS4BRK2:user/release-keys",
-                        BOARD: "universal8890",
-                        HOST: "SWHE",
-                        ID: "R16NW",
-                        TYPE: "user",
-                        TAGS: "release-keys"
-                    };
-
-                    const Build = Java.use("android.os.Build");
-                    Object.entries(buildProps).forEach(([key, value]) => {
-                        if (Build[key]) Build[key].value = value;
-                    });
-
-                    try {
-                        const TelephonyManager = Java.use("android.telephony.TelephonyManager");
-                        const telephonyMethods = {
-                            getDeviceId: "352099001761481",
-                            getSubscriberId: "310411234567890",
-                            getSimOperator: "310411",
-                            getNetworkOperator: "310411"
-                        };
-
-                        Object.entries(telephonyMethods).forEach(([method, returnValue]) => {
-                            if (TelephonyManager[method]) {
-                                TelephonyManager[method].implementation = function() {
-                                    return returnValue;
-                                };
-                            }
-                        });
-                    } catch(err) {
-                        console.log("[-] Telephony hooks not available");
-                    }
-
-                    try {
-                        const emulatorFiles = [
-                            "qemud", "qemu_pipe", "drivers", "cpuinfo",
-                            "/dev/socket/qemud", "/dev/qemu_pipe",
-                            "/system/lib/libc_malloc_debug_qemu.so",
-                            "/sys/qemu_trace", "/system/bin/qemu-props",
-                            "/dev/socket/genyd", "/dev/socket/baseband_genyd"
-                        ];
-
-                        Java.use("java.io.File").exists.implementation = function() {
-                            var name = Java.use("java.io.File").getName.call(this);
-                            var path = this.getAbsolutePath();
-                            
-                            if (emulatorFiles.some(file => name.includes(file) || path.includes(file))) {
-                                return false;
-                            }
-                            return this.exists.call(this);
-                        };
-                    } catch (err) {
-                        console.log("[-] File existence hook failed");
-                    }
-                    try {
-                        const suspiciousPackages = [
-                            "com.example.android.apis", "com.android.development",
-                            "com.android.emulator.smoketests", "com.android.emu.gps",
-                            "com.android.emulator", "com.android.qemulator"
-                        ];
-
-                        Java.use("android.app.ApplicationPackageManager").getPackageInfo.overload(
-                            "java.lang.String", "int"
-                        ).implementation = function(name, flag) {
-                            if (suspiciousPackages.includes(name)) {
-                                throw Java.use("android.content.pm.PackageManager$NameNotFoundException").$new();
-                            }
-                            return this.getPackageInfo.call(this, name, flag);
-                        };
-                    } catch (err) {
-                        console.log("[-] Package manager hook failed");
-                    }
-
-                    try {
-                        Interceptor.attach(Module.findExportByName(null, "android_getCpuFamily"), {
-                            onLeave: function(retval) {
-                                if ([2, 5].indexOf(retval) > -1) {
-                                    retval.replace(4);
-                                }
-                            },
-                        });
-                    } catch (err) {
-                        console.log("[-] CPU family hook failed");
-                    }
-
-                    try {
-                        const SystemProperties = Java.use("android.os.SystemProperties");
-                        SystemProperties.get.overload('java.lang.String').implementation = function(key) {
-                            if (key.includes("qemu") || key.includes("goldfish") || key.includes("sdk")) {
-                                return "";
-                            }
-                            return this.get(key);
-                        };
-                    } catch (err) {
-                        console.log("[-] System properties hook failed");
-                    }
-                });
-                
-                bypassStatus.emulator = true;
-                return true;
-            } catch(e) {
-                console.error("[!] Emulator Bypass Error:", e);
-                return false;
+                log(LOG_LEVEL.ERROR, "Bypass setup failed", e);
+                return {};
             }
         }
 
         try {
-            const results = {
-                ssl: setupSSLBypass(),
-                root: setupRootBypass(),
-                emulator: emulatorBypass()
-            };
+            const results = setupBypass();
+
+            // Add detailed error reporting
+            Object.entries(results).forEach(([type, success]) => {
+                if (!success) {
+                    console.log(`[-] ${type.toUpperCase()} bypass failed`);
+                }
+            });
 
             console.log("\n[*] Status:", Object.entries(results)
                 .map(([k, v]) => `${k}: ${v ? "✓" : "✗"}`)
                 .join(", "));
 
         } catch(err) {
-            console.error("[!] Critical Error:", err);
+            console.error("[!] Critical Error:", err.stack || err);
+            // Optionally try to recover or apply fallback bypasses
         }
     });
 }, 0);
