@@ -317,17 +317,30 @@ setTimeout(function() {
         function setupRootBypass() {
             console.log("[+] Initializing Enhanced Root Detection Bypass...");
             try {
-                // Add this check for root packages
-                const pm = Java.use("android.app.ActivityThread").currentApplication().getApplicationContext().getPackageManager();
-                ROOT_PACKAGES.forEach(pkg => {
-                    try {
-                        pm.getPackageInfo(pkg, 0);
-                        log(LOG_LEVEL.DEBUG, `Found root package: ${pkg}`);
-                    } catch(e) {
-                        // Package not found - good
+                // Wrap package manager check in a try-catch
+                try {
+                    const currentApplication = Java.use("android.app.ActivityThread").currentApplication();
+                    if (currentApplication) {
+                        const context = currentApplication.getApplicationContext();
+                        if (context) {
+                            const pm = context.getPackageManager();
+                            if (pm) {
+                                ROOT_PACKAGES.forEach(pkg => {
+                                    try {
+                                        pm.getPackageInfo(pkg, 0);
+                                        log(LOG_LEVEL.DEBUG, `Found root package: ${pkg}`);
+                                    } catch(e) {
+                                        // Package not found - good
+                                    }
+                                });
+                            }
+                        }
                     }
-                });
+                } catch(e) {
+                    console.log("[-] Package manager check failed - app context not ready");
+                }
 
+                // Continue with other bypasses even if package manager check fails
                 bypassNativeFileOperations();
                 bypassBuildProps();
                 bypassShellCommands();
