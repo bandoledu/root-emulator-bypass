@@ -648,11 +648,133 @@ setTimeout(function() {
             });
         }
 
+        function setupBurpInterceptor() {
+            console.log("");
+            console.log("[.] Setting up Burp Certificate Interceptor");
+
+            try {
+                const CertificateFactory = Java.use("java.security.cert.CertificateFactory");
+                const FileInputStream = Java.use("java.io.FileInputStream");
+                const BufferedInputStream = Java.use("java.io.BufferedInputStream");
+                const X509Certificate = Java.use("java.security.cert.X509Certificate");
+                const KeyStore = Java.use("java.security.KeyStore");
+                const TrustManagerFactory = Java.use("javax.net.ssl.TrustManagerFactory");
+                const SSLContext = Java.use("javax.net.ssl.SSLContext");
+
+                // Try multiple certificate file paths
+                const certPaths = [
+                    "/data/local/tmp/cert-der.crt",
+                    "/data/local/tmp/burp.der",
+                    "/data/local/tmp/burp.crt",
+                    "/data/local/tmp/cacert.der",
+                    "/data/local/tmp/cacert.crt"
+                ];
+
+                let fileInputStream = null;
+                let certPath = null;
+
+                // Try each certificate path
+                for (const path of certPaths) {
+                    try {
+                        fileInputStream = FileInputStream.$new(path);
+                        certPath = path;
+                        console.log("[+] Found certificate at: " + path);
+                        break;
+                    } catch(err) {
+                        console.log("[o] Certificate not found at: " + path);
+                    }
+                }
+
+                if (!fileInputStream) {
+                    console.log("[-] No certificate found. Please push the Burp certificate to one of these locations:");
+                    console.log(certPaths.join("\n"));
+                    return false;
+                }
+
+                console.log("[+] Loading Burp CA from: " + certPath);
+                const cf = CertificateFactory.getInstance("X.509");
+                const bufferedInputStream = BufferedInputStream.$new(fileInputStream);
+                const ca = cf.generateCertificate(bufferedInputStream);
+                bufferedInputStream.close();
+
+                const certInfo = Java.cast(ca, X509Certificate);
+                console.log("[o] Burp CA Info: " + certInfo.getSubjectDN());
+
+                // Create a KeyStore containing our trusted CAs
+                console.log("[+] Creating KeyStore for Burp CA...");
+                const keyStoreType = KeyStore.getDefaultType();
+                const keyStore = KeyStore.getInstance(keyStoreType);
+                keyStore.load(null, null);
+                keyStore.setCertificateEntry("ca", ca);
+                
+                // Create a TrustManager that trusts the CAs in our KeyStore
+                console.log("[+] Creating TrustManager for Burp CA...");
+                const tmfAlgorithm = TrustManagerFactory.getDefaultAlgorithm();
+                const tmf = TrustManagerFactory.getInstance(tmfAlgorithm);
+                tmf.init(keyStore);
+                console.log("[+] TrustManager ready");
+
+                // Force accept all hostnames
+                const NullHostnameVerifier = Java.registerClass({
+                    name: 'org.webkit.android.NullHostnameVerifier',
+                    implements: [Java.use('javax.net.ssl.HostnameVerifier')],
+                    methods: {
+                        verify: function (hostname, session) {
+                            console.log('[+] Bypassing hostname verification: ' + hostname);
+                            return true;
+                        }
+                    }
+                });
+
+                // Prepare the custom TrustManager
+                const TrustAllCerts = Java.registerClass({
+                    name: 'org.webkit.android.TrustAllCerts',
+                    implements: [Java.use('javax.net.ssl.X509TrustManager')],
+                    methods: {
+                        checkClientTrusted: function(chain, authType) {},
+                        checkServerTrusted: function(chain, authType) {},
+                        getAcceptedIssuers: function() { return []; }
+                    }
+                });
+
+                console.log("[+] Setting up SSL context and hostname verifier...");
+                
+                // Override SSL context
+                SSLContext.init.overload(
+                    "[Ljavax.net.ssl.KeyManager;", 
+                    "[Ljavax.net.ssl.TrustManager;", 
+                    "java.security.SecureRandom"
+                ).implementation = function(keyManager, trustManager, secureRandom) {
+                    console.log("[+] Intercepting SSLContext.init...");
+                    SSLContext.init.overload(
+                        "[Ljavax.net.ssl.KeyManager;", 
+                        "[Ljavax.net.ssl.TrustManager;", 
+                        "java.security.SecureRandom"
+                    ).call(this, keyManager, [TrustAllCerts.$new()], secureRandom);
+                    console.log("[+] Custom TrustManager installed");
+                };
+
+                // Set hostname verifier
+                const HttpsURLConnection = Java.use("javax.net.ssl.HttpsURLConnection");
+                HttpsURLConnection.setDefaultHostnameVerifier.implementation = function(hostnameVerifier) {
+                    console.log("[+] Setting NullHostnameVerifier...");
+                    return this.setDefaultHostnameVerifier(NullHostnameVerifier.$new());
+                };
+
+                console.log("[+] Burp certificate installation completed");
+                return true;
+            } catch(e) {
+                console.log("[-] Burp certificate setup failed:", e);
+                return false;
+            }
+        }
+
         function setupBypass() {
             try {
                 const results = {
                     ssl: setupSSLBypass(),
-                    root: setupRootBypass()
+                    root: setupRootBypass(),
+                    burp: setupBurpInterceptor()
                 };
                 
                 if (CONFIG.enableDetailedLogs) {
