@@ -1,6 +1,6 @@
-# Root Detection & SSL Bypass Script
+# Android Security Bypass Suite: Root Detection, SSL Pinning & Frida Detection
 
-A comprehensive Frida script for bypassing root detection and SSL certificate pinning in Android applications.
+A comprehensive Frida script for bypassing root detection, SSL certificate pinning, and Frida detection mechanisms in Android applications.
 
 ## Main Bypass Functionalities
 
