@@ -32,6 +32,15 @@ A comprehensive Frida script for bypassing root detection and SSL certificate pi
 - PhoneGap SSL checker
 - Appmattus certificate transparency
 
+### 4. Frida Detection Bypass
+- Comprehensive Frida anti-detection mechanisms:
+  - Ptrace syscall hooking
+  - Process maps filtering
+  - String pattern detection prevention
+  - Port scanning detection bypass
+  - Memory map sanitization
+  - Process name obfuscation
+
 ## Technical Details
 
 ### Root Detection Features
@@ -50,6 +59,46 @@ A comprehensive Frida script for bypassing root detection and SSL certificate pi
   - OkHttp
   - TrustKit
   - WebView
+
+### Frida Detection Features
+- Blocks detection of Frida-related strings and patterns
+- Intercepts and modifies process memory maps
+- Prevents port scanning of known Frida ports (27042, 27043, etc.)
+- Filters sensitive memory regions
+- Hooks native functions like ptrace
+- Sanitizes process information
+- Prevents detection through:
+  - Memory scanning
+  - Port checking
+  - Process name analysis
+  - String pattern matching
+  - Native library detection
+
+## Technical Implementation Details
+
+### Frida Detection Bypass Details
+- **Process Maps Protection:**
+  - Filters out Frida-related memory regions
+  - Removes traces of:
+    - frida-agent
+    - gum-js-loop
+    - frida-helper
+    - linjector
+  
+- **Port Protection:**
+  - Blocks connection attempts to Frida ports
+  - Prevents port scanning detection
+  - Handles common Frida communication ports
+  
+- **String Pattern Protection:**
+  - Intercepts string searches
+  - Removes Frida-related patterns
+  - Prevents detection through string analysis
+  
+- **Native Function Hooks:**
+  - Modifies ptrace behavior
+  - Handles process inspection attempts
+  - Prevents debugger detection
 
 ## Setup Guide
 

@@ -769,12 +769,163 @@ setTimeout(function() {
             }
         }
 
+        function hookFrida() {
+            try {
+                console.log("[*] Setting up Frida detection bypasses...");
+                let bypassSuccess = true;
+
+                // Ptrace bypass
+                try {
+                    const ptracePtr = Module.findExportByName("libc.so", "ptrace");
+                    if (ptracePtr) {
+                        Interceptor.attach(ptracePtr, {
+                            onEnter(args) {
+                                this.returnSuccess = true;
+                            },
+                            onLeave(retval) {
+                                if (this.returnSuccess) {
+                                    retval.replace(0);  // Success return value
+                                }
+                            }
+                        });
+                        console.log("[+] Ptrace bypass installed");
+                    }
+                } catch(e) {
+                    console.log("[-] Ptrace bypass failed:", e);
+                    bypassSuccess = false;
+                }
+
+                // Process name detection bypass
+                try {
+                    const openPtr = Module.findExportByName("libc.so", "open");
+                    if (openPtr) {
+                        Interceptor.attach(openPtr, {
+                            onEnter(args) {
+                                const path = args[0].readUtf8String();
+                                if (path.includes("/proc/") && path.includes("/maps")) {
+                                    this.shouldModify = true;
+                                }
+                            },
+                            onLeave(retval) {
+                                if (this.shouldModify && retval != -1) {
+                                    // Filter out Frida-related memory maps
+                                    const sensitivePatterns = [
+                                        "frida",
+                                        "gum-js-loop",
+                                        "gmain",
+                                        "linjector",
+                                        "frida-agent",
+                                        "frida-helper",
+                                        "magisk",
+                                        "xposed",
+                                        "substrate"
+                                    ];
+
+                                    const fd = retval.toInt32();
+                                    const originalMap = new File(fd, "r").readAll().toString();
+                                    
+                                    // Filter out lines containing sensitive patterns
+                                    const filteredMap = originalMap.split('\n')
+                                        .filter(line => !sensitivePatterns.some(pattern => 
+                                            line.toLowerCase().includes(pattern)))
+                                            .join('\n');
+
+                                    // Replace the original file descriptor with filtered content
+                                    new File(fd, "w").write(filteredMap);
+                                }
+                            }
+                        });
+                        console.log("[+] Process maps bypass installed");
+                    }
+                } catch(e) {
+                    console.log("[-] Process maps bypass failed:", e);
+                    bypassSuccess = false;
+                }
+
+                // String pattern detection bypass
+                try {
+                    const patterns = ["frida", "gum-js-loop", "gmain", "linjector"];
+                    const strstr = Module.findExportByName("libc.so", "strstr");
+                    if (strstr) {
+                        Interceptor.attach(strstr, {
+                            onEnter(args) {
+                                const haystack = args[0].readUtf8String();
+                                const needle = args[1].readUtf8String();
+                                if (patterns.some(pattern => 
+                                    needle.toLowerCase().includes(pattern) || 
+                                    haystack.toLowerCase().includes(pattern))) {
+                                    this.shouldModify = true;
+                                }
+                            },
+                            onLeave(retval) {
+                                if (this.shouldModify) {
+                                    retval.replace(ptr(0));  // Return null for matches
+                                }
+                            }
+                        });
+                        console.log("[+] String pattern bypass installed");
+                    }
+                } catch(e) {
+                    console.log("[-] String pattern bypass failed:", e);
+                    bypassSuccess = false;
+                }
+
+                // Port scanning detection bypass
+                try {
+                    const connect = Module.findExportByName("libc.so", "connect");
+                    if (connect) {
+                        Interceptor.attach(connect, {
+                            onEnter(args) {
+                                const sockAddr = args[1];
+                                if (sockAddr) {
+                                    const sa_family = sockAddr.add(1).readU8();
+                                    if (sa_family === 2) { // AF_INET
+                                        const port = sockAddr.add(2).readU16();
+                                        // Known Frida ports
+                                        const suspiciousPorts = new Set([
+                                            27042, // Default Frida
+                                            27043, // Frida
+                                            23946, // Frida server
+                                            27047  // Frida helper
+                                        ]);
+
+                                        if (suspiciousPorts.has(port)) {
+                                            console.log(`[!] Blocked connection to suspicious port: ${port}`);
+                                            this.shouldBlock = true;
+                                        }
+                                    }
+                                }
+                            },
+                            onLeave(retval) {
+                                if (this.shouldBlock) {
+                                    retval.replace(-1); // Connection failed
+                                }
+                            }
+                        });
+                        console.log("[+] Port scanning bypass installed");
+                    }
+                } catch(e) {
+                    console.log("[-] Port scanning bypass failed:", e);
+                    bypassSuccess = false;
+                }
+
+                global.fridaStatus = bypassSuccess;
+                return bypassSuccess;
+
+            } catch(e) {
+                console.log("[-] Fatal error in Frida bypass:", e);
+                global.fridaStatus = false;
+                return false;
+            }
+        }
+
         function setupBypass() {
             try {
                 const results = {
                     ssl: setupSSLBypass(),
                     root: setupRootBypass(),
-                    burp: setupBurpInterceptor()
+                    burp: setupBurpInterceptor(),
+                    frida: hookFrida()
                 };
                 
                 if (CONFIG.enableDetailedLogs) {
@@ -1274,4 +1425,5 @@ setTimeout(function() {
         return true;
 
     });
-}, 0);
+    
+}, 0);  
