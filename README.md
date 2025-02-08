@@ -4,6 +4,15 @@ A universal, non-customized Frida script for bypassing security mechanisms in An
 
 > **Important:** This is a universal bypass script, not a customized solution. It's designed to work across different Android versions and applications without modifications.
 
+> **Note about Stability:** As with any universal bypass solution, crashes may occur:
+> - Some applications may crash on first attempt - retry 2-3 times
+> - If persistent crashes occur, try:
+>   - Restarting the target application
+>   - Relaunching Frida
+>   - Clearing app data/cache
+>   - Running with `-f` flag instead of `-F`
+> - Success rate varies by application and protection mechanisms
+
 ## Core Features
 
 ### Universal Compatibility
@@ -61,18 +70,9 @@ A universal, non-customized Frida script for bypassing security mechanisms in An
 ### Basic Setup
 ```bash
 # Load the script
-frida -U -l root_bypass_modern.js -f com.target.application
+frida -U -l root_bypass.js -f com.target.application
 ```
 
-### Expected Output
-```
-[*] Starting Universal Security Bypass Suite
-[*] Initializing Universal Security Bypass...
-[*] Bypass Status:
-  memory: ✓
-  root: ✓
-  ssl: ✓
-```
 
 ## Technical Details
 
@@ -123,6 +123,11 @@ This universal bypass script is intended for:
 3. Consider supplementing with custom code if needed
 4. Test thoroughly on target application
 5. Be aware of limitations
+6. For crash handling:
+   - Always try multiple attempts
+   - Monitor logcat for specific errors
+   - Consider timing of script injection
+   - Use appropriate Frida launch flags
 
 ## License & Usage
 For legitimate security research and authorized testing only. Users are responsible for compliance with applicable laws and regulations.
